@@ -1,0 +1,35 @@
+{
+  "name": "my-context-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first MCP gateway for curating tools from multiple upstream servers.",
+  "bin": {
+    "context-manager": "./dist/index.mjs"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "vp pack",
+    "check": "vp check",
+    "dev": "vp node --watch src/index.ts",
+    "start": "node dist/index.mjs",
+    "test": "vp test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "11.17.0",
+      "onFail": "download"
+    }
+  }
+}

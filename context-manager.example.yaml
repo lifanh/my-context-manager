@@ -1,0 +1,31 @@
+version: 1
+
+listen:
+  port: 7331
+
+servers:
+  filesystem:
+    transport: stdio
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-filesystem"
+      - /path/to/allowed/directory
+
+  # Remote servers can read headers from the process environment without
+  # storing secret values in this file.
+  # internal:
+  #   transport: streamable-http
+  #   url: https://mcp.example.com/mcp
+  #   headers:
+  #     Authorization:
+  #       fromEnv: INTERNAL_MCP_TOKEN
+  #       prefix: "Bearer "
+
+profiles:
+  coding:
+    tools:
+      - server: filesystem
+        tool: read_text_file
+        name: file_read
+        description: Read a UTF-8 text file from the configured workspace.
