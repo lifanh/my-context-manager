@@ -19,13 +19,37 @@ const environmentReferenceSchema = z.object({
   prefix: z.string().default(""),
 });
 
-const streamableHttpServerSchema = z.object({
-  transport: z.literal("streamable-http"),
-  url: z.url().refine((value) => value.startsWith("http://") || value.startsWith("https://"), {
-    error: "must use http or https",
-  }),
-  headers: z.record(z.string().min(1), environmentReferenceSchema).default({}),
-});
+const streamableHttpServerSchema = z
+  .object({
+    transport: z.literal("streamable-http"),
+    url: z.url().refine((value) => value.startsWith("http://") || value.startsWith("https://"), {
+      error: "must use http or https",
+    }),
+    auth: z.literal("oauth").optional(),
+    headers: z.record(z.string().min(1), environmentReferenceSchema).default({}),
+  })
+  .superRefine((server, context) => {
+    if (server.auth !== "oauth") {
+      return;
+    }
+
+    const url = new URL(server.url);
+    if (url.protocol !== "https:" && !isLoopbackHostname(url.hostname)) {
+      context.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: "must use https for OAuth unless the server is on loopback",
+      });
+    }
+
+    if (Object.keys(server.headers).some((name) => name.toLowerCase() === "authorization")) {
+      context.addIssue({
+        code: "custom",
+        path: ["headers"],
+        message: "must not configure an Authorization header together with auth: oauth",
+      });
+    }
+  });
 
 const stdioServerSchema = z.object({
   transport: z.literal("stdio"),
@@ -154,4 +178,8 @@ function validateReferences(config: Config): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "127.0.0.1" || hostname === "[::1]";
 }

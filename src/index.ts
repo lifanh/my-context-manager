@@ -3,6 +3,7 @@
 import { resolve } from "node:path";
 import { loadConfig } from "./config.ts";
 import { Gateway } from "./gateway.ts";
+import { loginToOAuthServer } from "./oauth.ts";
 
 const VERSION = "0.1.0";
 
@@ -19,6 +20,12 @@ async function main(): Promise<void> {
 
   const configPath = resolve(args.configPath ?? "context-manager.yaml");
   const config = await loadConfig(configPath);
+  if (args.command === "auth-login") {
+    await loginToOAuthServer(config, args.serverId);
+    console.log(`OAuth authorization saved for ${args.serverId}`);
+    return;
+  }
+
   const gateway = await Gateway.create(config);
   const baseUrl = await gateway.listen();
 
@@ -42,23 +49,41 @@ async function main(): Promise<void> {
 }
 
 interface Arguments {
+  command: "start" | "auth-login";
+  serverId: string;
   configPath?: string;
   help: boolean;
   version: boolean;
 }
 
 function parseArguments(args: string[]): Arguments {
-  const result: Arguments = { help: false, version: false };
+  const result: Arguments = {
+    command: "start",
+    serverId: "",
+    help: false,
+    version: false,
+  };
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
-    if (argument === "--help" || argument === "-h") {
+    if (argument === "auth" && args[index + 1] === "login") {
+      const serverId = args[index + 2];
+      if (!serverId || serverId.startsWith("-")) {
+        throw new Error("auth login requires an upstream server ID");
+      }
+      if (result.command !== "start") {
+        throw new Error("Only one command may be specified");
+      }
+      result.command = "auth-login";
+      result.serverId = serverId;
+      index += 2;
+    } else if (argument === "--help" || argument === "-h") {
       result.help = true;
     } else if (argument === "--version" || argument === "-v") {
       result.version = true;
     } else if (argument === "--config" || argument === "-c") {
       const value = args[index + 1];
-      if (!value) {
+      if (!value || value.startsWith("-")) {
         throw new Error(`${argument} requires a path`);
       }
       result.configPath = value;
@@ -72,7 +97,9 @@ function parseArguments(args: string[]): Arguments {
 }
 
 function printHelp(): void {
-  console.log(`Usage: context-manager [options]
+  console.log(`Usage:
+  context-manager [options]
+  context-manager auth login <server> [options]
 
 Options:
   -c, --config <path>  Configuration file (default: context-manager.yaml)

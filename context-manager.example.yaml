@@ -22,6 +22,13 @@ servers:
   #       fromEnv: INTERNAL_MCP_TOKEN
   #       prefix: "Bearer "
 
+  # OAuth servers use browser authorization and keep tokens in the operating
+  # system credential store. Run `context-manager auth login remote` first.
+  # remote:
+  #   transport: streamable-http
+  #   url: https://mcp.example.com/mcp
+  #   auth: oauth
+
 profiles:
   coding:
     tools:
