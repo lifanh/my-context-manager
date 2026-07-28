@@ -16,7 +16,7 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import open from "open";
-import type { Config } from "./config.ts";
+import { type Config, isLoopbackHostname } from "./config.ts";
 
 const KEYRING_SERVICE = "my-context-manager/oauth";
 const CALLBACK_PORT = 7332;
@@ -501,5 +501,5 @@ function sameEndpoint(left: URL, right: URL): boolean {
 }
 
 function isLoopback(url: URL): boolean {
-  return url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "[::1]");
+  return url.protocol === "http:" && isLoopbackHostname(url.hostname);
 }

@@ -60,6 +60,16 @@ describe("parseConfig", () => {
     ).toThrowError(/must not configure an Authorization header/);
   });
 
+  test("accepts the full IPv4 loopback range for local OAuth", () => {
+    const config = parseConfig(
+      validConfig
+        .replace("https://example.com", "http://127.0.0.2")
+        .replace("    url:", "    auth: oauth\n    url:"),
+    );
+
+    expect(config.servers.source).toMatchObject({ auth: "oauth" });
+  });
+
   test("rejects unknown server references", () => {
     expect(() =>
       parseConfig(validConfig.replace("server: source", "server: missing")),

@@ -180,6 +180,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isLoopbackHostname(hostname: string): boolean {
-  return hostname === "127.0.0.1" || hostname === "[::1]";
+export function isLoopbackHostname(hostname: string): boolean {
+  return /^127(?:\.\d{1,3}){3}$/.test(hostname) || hostname === "[::1]";
 }
