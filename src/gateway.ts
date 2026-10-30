@@ -6,11 +6,15 @@ import {
   type ServerResponse,
 } from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   getDefaultEnvironment,
   StdioClientTransport,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
@@ -24,6 +28,14 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { buildProfileCatalog, type DiscoveredTools } from "./catalog.ts";
 import { type Config, type ServerConfig } from "./config.ts";
+import {
+  createSecureScopedFetch,
+  KeyringOAuthCredentialStore,
+  OAuthLoginRequiredError,
+  oauthCallbackUrl,
+  type OAuthCredentialStore,
+  StoredOAuthProvider,
+} from "./oauth.ts";
 
 const IMPLEMENTATION = { name: "my-context-manager", version: "0.1.0" };
 
@@ -39,15 +51,18 @@ class UpstreamConnection {
   tools: ReadonlyMap<string, Tool> = new Map();
   private readonly config: ServerConfig;
   private readonly onToolsChanged: (serverId: string) => Promise<void>;
+  private readonly oauthStore: OAuthCredentialStore;
 
   constructor(
     id: string,
     config: ServerConfig,
     onToolsChanged: (serverId: string) => Promise<void>,
+    oauthStore: OAuthCredentialStore,
   ) {
     this.id = id;
     this.config = config;
     this.onToolsChanged = onToolsChanged;
+    this.oauthStore = oauthStore;
   }
 
   async connect(): Promise<void> {
@@ -61,10 +76,35 @@ class UpstreamConnection {
     });
 
     if (this.config.transport === "streamable-http") {
+      const authProvider =
+        this.config.auth === "oauth"
+          ? await StoredOAuthProvider.create(
+              this.id,
+              this.config.url,
+              oauthCallbackUrl(),
+              this.oauthStore,
+              undefined,
+              false,
+            )
+          : undefined;
+      if (authProvider && !authProvider.hasGatewayCredentials()) {
+        throw oauthLoginRequired(this.id);
+      }
+      const headers = resolveEnvironmentValues(this.config.headers);
       const transport = new StreamableHTTPClientTransport(new URL(this.config.url), {
-        requestInit: { headers: resolveEnvironmentValues(this.config.headers) },
+        authProvider,
+        ...(authProvider
+          ? { fetch: createSecureScopedFetch(new URL(this.config.url), headers) }
+          : { requestInit: { headers } }),
       });
-      await this.client.connect(transport);
+      try {
+        await this.client.connect(transport);
+      } catch (error) {
+        if (this.config.auth === "oauth" && isOAuthAuthorizationError(error)) {
+          throw oauthLoginRequired(this.id, error);
+        }
+        throw error;
+      }
     } else {
       const transport = new StdioClientTransport({
         command: this.config.command,
@@ -88,14 +128,23 @@ class UpstreamConnection {
     signal: AbortSignal,
     timeout: number,
   ): Promise<CallToolResult> {
-    return this.client.request(
-      {
-        method: "tools/call",
-        params: { name, arguments: args },
-      },
-      CallToolResultSchema,
-      { signal, timeout },
-    );
+    try {
+      return await this.client.request(
+        {
+          method: "tools/call",
+          params: { name, arguments: args },
+        },
+        CallToolResultSchema,
+        { signal, timeout },
+      );
+    } catch (error) {
+      if (this.config.transport === "streamable-http" && this.config.auth === "oauth") {
+        if (isOAuthAuthorizationError(error)) {
+          throw oauthLoginRequired(this.id, error);
+        }
+      }
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
@@ -134,15 +183,20 @@ export class Gateway {
   private readonly upstreams = new Map<string, UpstreamConnection>();
   private readonly sessions = new Map<string, DownstreamSession>();
   private readonly config: Config;
+  private readonly oauthStore: OAuthCredentialStore;
   private httpServer: HttpServer | undefined;
   private closing = false;
 
-  private constructor(config: Config) {
+  private constructor(config: Config, oauthStore: OAuthCredentialStore) {
     this.config = config;
+    this.oauthStore = oauthStore;
   }
 
-  static async create(config: Config): Promise<Gateway> {
-    const gateway = new Gateway(config);
+  static async create(
+    config: Config,
+    options: { oauthStore?: OAuthCredentialStore } = {},
+  ): Promise<Gateway> {
+    const gateway = new Gateway(config, options.oauthStore ?? new KeyringOAuthCredentialStore());
 
     try {
       await gateway.connectUpstreams();
@@ -215,8 +269,11 @@ export class Gateway {
 
   private async connectUpstreams(): Promise<void> {
     const connections = Object.entries(this.config.servers).map(async ([id, config]) => {
-      const connection = new UpstreamConnection(id, config, (serverId) =>
-        this.handleUpstreamToolsChanged(serverId),
+      const connection = new UpstreamConnection(
+        id,
+        config,
+        (serverId) => this.handleUpstreamToolsChanged(serverId),
+        this.oauthStore,
       );
       this.upstreams.set(id, connection);
       await connection.connect();
@@ -521,4 +578,20 @@ function toolError(text: string): CallToolResult {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isOAuthAuthorizationError(error: unknown): boolean {
+  return (
+    error instanceof UnauthorizedError ||
+    error instanceof OAuthLoginRequiredError ||
+    (error instanceof StreamableHTTPError && error.code === 401)
+  );
+}
+
+function oauthLoginRequired(serverId: string, cause?: unknown): Error {
+  return new Error(
+    `OAuth authorization required for upstream ${serverId}; ` +
+      `run context-manager auth login ${serverId}`,
+    cause === undefined ? undefined : { cause },
+  );
 }
